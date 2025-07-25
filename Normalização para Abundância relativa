@@ -1,0 +1,55 @@
+#instalar pacotes####
+install.packages("openxlsx", dependencies = TRUE)
+install.packages("tidyverse", dependencies = TRUE)
+install.packages("janitor", dependencies = TRUE)
+
+
+#Carregar pacotes necessários####
+library(openxlsx)
+library(tidyverse)
+library(janitor)
+
+
+# Ler dados do Excel (planilha 1)
+dados_especies <- read.xlsx("dados_esp.xlsx", sheet = 1, colNames = TRUE)
+
+# Padronizar nomes das colunas, converter colunas específicas para numérico,
+# remover linhas sem 'especie' e preencher NAs com 0
+dados_especies <- dados_especies %>% 
+  clean_names() %>%
+  mutate(across(unknown:arsenophonus_nasoniae, as.numeric)) %>%
+  drop_na(especie) %>%
+  mutate(across(everything(), ~replace_na(.x, 0)))
+
+# Definir função para normalizar por abundância relativa (linha = 100%)
+divide_by_row_sum <- function(data_frame, columns) {
+  data_frame[columns] <- t(apply(data_frame[columns], 1, function(x) {
+    total <- sum(x)
+    if (total == 0) return(rep(0, length(x))) # evita divisão por zero
+    return((x / total) * 100)
+  }))
+  return(data_frame)
+}
+
+# Selecionar apenas colunas numéricas (normalização será aplicada nelas)
+nomes_colunas <- dados_especies %>% 
+  select(where(is.numeric)) %>% 
+  colnames()
+
+# Aplicar a normalização por linha
+dados_especies_normalizados <- divide_by_row_sum(dados_especies, nomes_colunas)
+
+# Converter 'codigo' para texto (se existir)
+if ("especie" %in% colnames(dados_especies_normalizados)) {
+  dados_especies_normalizados$codigo <- as.character(dados_especies_normalizados$especie)
+}
+
+# Garantir que colunas numéricas estejam no formato certo (exceto 'codigo')
+dados_especies_normalizados <- dados_especies_normalizados %>%
+  mutate(across(where(is.character), ~.)) %>%  # garante que outras colunas não sejam afetadas
+  mutate(across(where(is.numeric), as.numeric))
+
+# Exportar os dados normalizados para planilha Excel
+write.xlsx(dados_especies_normalizados, 
+           file = "dados_sequenciamento_microbioma_normalizados_especie.xlsx", 
+           overwrite = TRUE)
