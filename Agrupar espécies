@@ -1,0 +1,21 @@
+install.packages("readxl")   # para ler Excel
+install.packages("writexl")  # para salvar Excel
+install.packages("dplyr")    # para manipulação de dados
+install.packages("tidyr")    # para auxiliar no tratamento
+
+# Carregue os pacotes
+library(readxl)
+library(writexl)
+library(dplyr)
+library(tidyr)
+
+# 1. Ler o Excel (ajuste o caminho e nome do arquivo)
+df <- read_excel("dados_Thiago_IC.xlsx")
+
+# 2. Agrupar por Nome e somar todas as colunas numéricas
+df_agrupado <- df %>%
+  group_by(especie) %>%  # Substitua "Nome" pelo nome real da sua coluna de nomes
+  summarise(across(where(is.numeric), sum, na.rm = TRUE), .groups = "drop")
+
+# 3. Exportar para novo arquivo Excel
+write_xlsx(df_agrupado, "resultado_somado.xlsx")
