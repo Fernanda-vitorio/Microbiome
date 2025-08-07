@@ -1,0 +1,109 @@
+#### Instalar pacotes (executar uma vez) ####
+install.packages("openxlsx", dependencies = TRUE)
+install.packages("tidyverse", dependencies = TRUE)
+install.packages("gtsummary", dependencies = TRUE)
+install.packages("labelled", dependencies = TRUE)
+install.packages("flextable", dependencies = TRUE)
+install.packages("janitor", dependencies = TRUE)
+install.packages("metan", dependencies = TRUE)
+install.packages("stringr", dependencies = TRUE)
+install.packages("rstatix", dependencies = TRUE)
+
+#### Carregar pacotes ####
+library(openxlsx)
+library(tidyverse)
+library(gtsummary)
+library(labelled)
+library(flextable)
+library(janitor)
+library(metan)
+library(stringr)
+library(rstatix)
+
+#### Carregar planilha e limpar nomes ####
+dados_especies <- read.xlsx("esp_IC_Thiago.xlsx", sheet = 1, colNames = TRUE) %>%
+  clean_names()
+
+#### Selecionar colunas de gêneros para transformação binária ####
+cols_to_mutate <- dados_especies %>%
+  select(-projeto, -id, -idade, -sexo, -sobrepeso, -obesidade, -has, -has_sobrepeso,-med_has,-med_geral,-med_dep, -med_int, -fumante) %>%
+  colnames()
+
+#### Calcular o 3º quartil para cada gênero no grupo controle (sobrepeso == 0) ####
+quartiles <- dados_especies %>%
+  filter(sobrepeso == 0) %>%
+  summarise(across(all_of(cols_to_mutate), ~ quantile(., 0.75, na.rm = TRUE))) %>%
+  unlist()  # transforma em vetor nomeado
+
+#### Criar novas colunas binárias com base no 3º quartil ####
+dados_especies_filtrado_binario <- dados_especies %>%
+  mutate(across(
+    all_of(cols_to_mutate),
+    ~ ifelse(. > quartiles[[cur_column()]], 1, 0),
+    .names = "{.col}_binario"
+  ))
+
+
+#### Regressão univariada ####
+
+regressao_univariada <- dados_especies_filtrado_binario %>%  
+  select(idade, sexo, sobrepeso, med_geral, med_int, fumante, ends_with("binario")) %>% 
+  tbl_uvregression(
+    method = glm,
+    y = sobrepeso,
+    method.args = list(family = binomial),
+    exponentiate = TRUE,
+    hide_n = TRUE,
+    formula = "{y} ~ {x} + idade + sexo",
+    pvalue_fun = ~style_pvalue(.x, digits = 2)
+  ) %>%
+  bold_p(t = 0.05) %>%   
+  sort_p() %>%           
+  modify_header(update = list(
+    label ~ "Variável",
+    p.value ~ "p",
+    estimate ~ "OR",
+    ci ~ "IC 95%"
+  )) %>%
+  modify_footnote(update = list(
+    estimate ~ "Odds Ratio",
+    ci ~ "Intervalo de confiança de 95%"
+  ), abbreviation = TRUE) %>%
+  modify_caption(caption = "Tabela - Regressões univariadas") %>%
+  as_flex_table()
+
+
+
+save_as_docx(regressao_univariada, path = "Regressões univariadas corrigido para idade e sexo.docx")
+
+#regressão multivariada####
+
+#modelo completo#
+
+regressao_multivariada_modelo_completo <- glm(sobrepeso ~ sexo + idade + faecalibacterium_longum_binario + blautia_caecimuris_binario + monoglobus_pectinilyticus_binario + holdemanella_porci_binario, family=binomial(link="logit"), data = dados_especies_filtrado_binario) %>%
+  tbl_regression(intercept = FALSE, exponentiate = TRUE) %>%
+  add_q(method = "fdr") %>% 
+  sort_p(q=TRUE) %>% 
+  bold_p(t = 0.05, q = TRUE) %>% 
+  modify_header(update = list(label ~ "Variável", p.value ~ "p", q.value ~ "pcorr", estimate ~ "OR", ci ~ "IC 95%")) %>%
+  modify_footnote(update = list(estimate ~ "Odds Ratio", ci ~ "Intervalo de Confiança de 95%"), abbreviation = TRUE)
+regressao_multivariada_modelo_completo  
+
+#modelo reduzido
+
+modelo_reduzido <- glm(sobrepeso ~ sexo + idade + faecalibacterium_longum_binario + blautia_caecimuris_binario + monoglobus_pectinilyticus_binario + holdemanella_porci_binario, family = binomial, data = dados_especies_filtrado_binario) %>% 
+  tbl_regression(exponentiate = TRUE,
+                 pvalue_fun = function(x) {
+                   if_else(
+                     is.na(x), 
+                     NA_character_,
+                     if_else(x < 0.001, format(x, digits = 2, scientific = TRUE), format(round(x, 3), scientific = F))
+                   )
+                 }) %>% 
+  add_q(method = "fdr") %>% 
+  bold_p(q = TRUE, t = 0.05) %>% 
+  sort_p(q = TRUE) %>% 
+  modify_header(label ~ "Variáveis", p.value ~ "p", estimate ~ "OR", conf.low ~ "IC 95%", q.value = "pcorr") %>% 
+  as_flex_table()
+
+save_as_docx(modelo_reduzido, path = "Regressões multivariadas.docx")
